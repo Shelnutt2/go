@@ -665,7 +665,7 @@ func equalTimeAndZone(a, b Time) bool {
 	return a.Equal(b) && aoffset == boffset && aname == bname
 }
 
-var gobTests = []Time{
+var gobTimeTests = []Time{
 	Date(0, 1, 2, 3, 4, 5, 6, UTC),
 	Date(7, 8, 9, 10, 11, 12, 13, FixedZone("", 0)),
 	Unix(81985467080890095, 0x76543210), // Time.sec: 0x0123456789ABCDEF
@@ -678,7 +678,7 @@ func TestTimeGob(t *testing.T) {
 	var b bytes.Buffer
 	enc := gob.NewEncoder(&b)
 	dec := gob.NewDecoder(&b)
-	for _, tt := range gobTests {
+	for _, tt := range gobTimeTests {
 		var gobtt Time
 		if err := enc.Encode(&tt); err != nil {
 			t.Errorf("%v gob Encode error = %q, want nil", tt, err)
@@ -691,7 +691,7 @@ func TestTimeGob(t *testing.T) {
 	}
 }
 
-var invalidEncodingTests = []struct {
+var invalidTimeEncodingTests = []struct {
 	bytes []byte
 	want  string
 }{
@@ -701,7 +701,7 @@ var invalidEncodingTests = []struct {
 }
 
 func TestInvalidTimeGob(t *testing.T) {
-	for _, tt := range invalidEncodingTests {
+	for _, tt := range invalidTimeEncodingTests {
 		var ignored Time
 		err := ignored.GobDecode(tt.bytes)
 		if err == nil || err.Error() != tt.want {
@@ -737,7 +737,7 @@ func TestNotGobEncodableTime(t *testing.T) {
 	}
 }
 
-var jsonTests = []struct {
+var jsonTimeTests = []struct {
 	time Time
 	json string
 }{
@@ -747,7 +747,7 @@ var jsonTests = []struct {
 }
 
 func TestTimeJSON(t *testing.T) {
-	for _, tt := range jsonTests {
+	for _, tt := range jsonTimeTests {
 		var jsonTime Time
 
 		if jsonBytes, err := json.Marshal(tt.time); err != nil {
@@ -880,6 +880,127 @@ func TestParseDurationRoundTrip(t *testing.T) {
 		if err != nil || d0 != d1 {
 			t.Errorf("round-trip failed: %d => %q => %d, %v", d0, s, d1, err)
 		}
+	}
+}
+
+var gobDurationTests = []Duration{
+	Duration(123456789),
+	Duration(rand.Int31()) * Millisecond,
+	16 * Hour,
+	4*Minute + 10*Second + 500*Millisecond,
+	0,
+	-1<<63 + 1*Nanosecond,
+}
+
+func TestDurationGob(t *testing.T) {
+	var b bytes.Buffer
+	enc := gob.NewEncoder(&b)
+	dec := gob.NewDecoder(&b)
+	for _, dt := range gobDurationTests {
+		var gobdt Duration
+		if err := enc.Encode(&dt); err != nil {
+			t.Errorf("%v gob Encode error = %q, want nil", dt, err)
+		} else if err := dec.Decode(&gobdt); err != nil {
+			t.Errorf("%v gob Decode error = %q, want nil", dt, err)
+		} else if gobdt != dt {
+			t.Errorf("Decoded duration = %v, want %v", gobdt, dt)
+		}
+		b.Reset()
+	}
+}
+
+var invalidDurationEncodingTests = []struct {
+	bytes []byte
+	want  string
+}{
+	{[]byte{}, "Duration.UnmarshalBinary: no data"},
+	{[]byte{0, 2, 3}, "Duration.UnmarshalBinary: unsupported version"},
+	{[]byte{1, 2, 3}, "Duration.UnmarshalBinary: invalid length"},
+}
+
+func TestInvalidDurationGob(t *testing.T) {
+	for _, tt := range invalidDurationEncodingTests {
+		var ignored Duration
+		err := ignored.GobDecode(tt.bytes)
+		if err == nil || err.Error() != tt.want {
+			t.Errorf("time.GobDecode(%#v) error = %v, want %v", tt.bytes, err, tt.want)
+		}
+		err = ignored.UnmarshalBinary(tt.bytes)
+		if err == nil || err.Error() != tt.want {
+			t.Errorf("time.UnmarshalBinary(%#v) error = %v, want %v", tt.bytes, err, tt.want)
+		}
+	}
+}
+
+var jsonDurationTests = []struct {
+	json     string
+	ok       bool
+	duration Duration
+}{
+	// simple
+	{`"0s"`, true, 0},
+	{`"5s"`, true, 5 * Second},
+	{`"30s"`, true, 30 * Second},
+	{`"24m38s"`, true, 1478 * Second},
+	// sign
+	{`"-5s"`, true, -5 * Second},
+	{`"5s"`, true, 5 * Second},
+	// decimal
+	{`"5s"`, true, 5 * Second},
+	{`"5.6s"`, true, 5*Second + 600*Millisecond},
+	{`"500ms"`, true, 500 * Millisecond},
+	{`"1s"`, true, 1 * Second},
+	{`"1s"`, true, 1 * Second},
+	{`"1.004s"`, true, 1*Second + 4*Millisecond},
+	{`"1.004s"`, true, 1*Second + 4*Millisecond},
+	{`"1m40.001s"`, true, 100*Second + 1*Millisecond},
+	// different units
+	{`"10ns"`, true, 10 * Nanosecond},
+	{`"11µs"`, true, 11 * Microsecond},
+	{`"12µs"`, true, 12 * Microsecond}, // U+00B5
+	{`"13ms"`, true, 13 * Millisecond},
+	{`"14s"`, true, 14 * Second},
+	{`"15m0s"`, true, 15 * Minute},
+	{`"16h0m0s"`, true, 16 * Hour},
+	// composite durations
+	{`"3h30m0s"`, true, 3*Hour + 30*Minute},
+	{`"4m10.5s"`, true, 4*Minute + 10*Second + 500*Millisecond},
+	{`"-2m3.4s"`, true, -(2*Minute + 3*Second + 400*Millisecond)},
+	{`"1h2m3.004005006s"`, true, 1*Hour + 2*Minute + 3*Second + 4*Millisecond + 5*Microsecond + 6*Nanosecond},
+	{`"39h9m14.425s"`, true, 39*Hour + 9*Minute + 14*Second + 425*Millisecond},
+	// large value
+	{`"52.763797s"`, true, 52763797000 * Nanosecond},
+	// more than 9 digits after decimal point, see https://golang.org/issue/6617
+	{`"20m0s"`, true, 20 * Minute},
+	// 9007199254740993 = 1<<53+1 cannot be stored precisely in a float64
+	{`"2501h59m59.254740993s"`, true, (1<<53 + 1) * Nanosecond},
+	// largest duration that can be represented by int64 in nanoseconds
+	{`"2562047h47m16.854775807s"`, true, (1<<63 - 1) * Nanosecond},
+	// large negative value
+	{`"-2562047h47m16.854775807s"`, true, -1<<63 + 1*Nanosecond},
+}
+
+func TestDurationJSON(t *testing.T) {
+	for _, dt := range jsonDurationTests {
+		var jsonDuration Duration
+
+		if jsonBytes, err := json.Marshal(dt.duration); err != nil {
+			t.Errorf("%v json.Marshal error = %v, want nil", dt.duration, err)
+		} else if string(jsonBytes) != dt.json {
+			t.Errorf("%v JSON = %#q, want %#q", dt.duration, string(jsonBytes), dt.json)
+		} else if err = json.Unmarshal(jsonBytes, &jsonDuration); err != nil {
+			t.Errorf("%v json.Unmarshal error = %v, want nil", dt.duration, err)
+		} else if jsonDuration != dt.duration {
+			t.Errorf("Unmarshaled duration = %v, want %v", jsonDuration, dt.duration)
+		}
+	}
+}
+
+func TestInvalidDurationJSON(t *testing.T) {
+	var dt Duration
+	err := json.Unmarshal([]byte(`{"now is the duration":"buddy"}`), &dt)
+	if err == nil {
+		t.Errorf("expected *Error unmarshaling JSON, got %v", err)
 	}
 }
 

@@ -603,6 +603,118 @@ func (d Duration) Hours() float64 {
 	return float64(hour) + float64(nsec)*(1e-9/60/60)
 }
 
+const durationBinaryVersion byte = 1
+
+// MarshalBinary implements the encoding.BinaryMarshaler interface.
+func (d Duration) MarshalBinary() ([]byte, error) {
+	/*
+		// Create a byte buffer to store int64 into
+		var buf = make([]byte, binary.MaxVarintLen64)
+		digitsStored := binary.PutVarint(buf, int64(d))
+
+		// Validate at least one digit was stored
+		if digitsStored < 1 {
+			return nil, errors.New("Duration.MarshalBinary: could not stored digits in binary")
+		}
+
+		enc := []byte{
+			durationBinaryVersion, // byte 0 : version
+		}
+
+		enc = append(enc, buf...)
+	*/
+
+	enc := []byte{
+		durationBinaryVersion, // byte 0 : version
+		byte(d >> 56),         // bytes 1-8: nanoseconds
+		byte(d >> 48),
+		byte(d >> 40),
+		byte(d >> 32),
+		byte(d >> 24),
+		byte(d >> 16),
+		byte(d >> 8),
+		byte(d),
+	}
+
+	return enc, nil
+}
+
+// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.
+func (d *Duration) UnmarshalBinary(data []byte) error {
+	buf := data
+	if len(buf) == 0 {
+		return errors.New("Duration.UnmarshalBinary: no data")
+	}
+
+	if buf[0] != durationBinaryVersion {
+		return errors.New("Duration.UnmarshalBinary: unsupported version")
+	}
+
+	if len(buf) != /*version*/ 1+ /*nanoseconds*/ 8 {
+		return errors.New("Duration.UnmarshalBinary: invalid length")
+	}
+
+	buf = buf[1:]
+	*d = Duration(int64(buf[7]) | int64(buf[6])<<8 | int64(buf[5])<<16 | int64(buf[4])<<24 |
+		int64(buf[3])<<32 | int64(buf[2])<<40 | int64(buf[1])<<48 | int64(buf[0])<<56)
+	/*
+		// Parse the bytes to an int64
+		convertedInt64, _ := binary.Varint(buf)
+		// Convert the int64 to Duration type
+		*d = Duration(convertedInt64)
+	*/
+	return nil
+}
+
+// TODO(rsc): Remove GobEncoder, GobDecoder, MarshalJSON, UnmarshalJSON in Go 2.
+// The same semantics will be provided by the generic MarshalBinary, MarshalText,
+// UnmarshalBinary, UnmarshalText.
+
+// GobEncode implements the gob.GobEncoder interface.
+func (d Duration) GobEncode() ([]byte, error) {
+	return d.MarshalBinary()
+}
+
+// GobDecode implements the gob.GobDecoder interface.
+func (d *Duration) GobDecode(data []byte) error {
+	return d.UnmarshalBinary(data)
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+// The duration is a quoted string provided by String()
+func (d Duration) MarshalJSON() ([]byte, error) {
+
+	b := make([]byte, 0, len(RFC3339Nano)+2)
+	b = append(b, '"')
+	b = append(b, []byte(d.String())...)
+	b = append(b, '"')
+	return b, nil
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+// The duration is expected to be a quoted string in ParseDuration syntax.
+func (d *Duration) UnmarshalJSON(data []byte) error {
+	// Fractional seconds are handled implicitly by Parse.
+	var err error
+	*d, err = ParseDuration(string(data)[1 : len(string(data))-1])
+	return err
+}
+
+// MarshalText implements the encoding.TextMarshaler interface.
+// The duration is a quoted string provided by String()
+func (d Duration) MarshalText() ([]byte, error) {
+	return []byte(d.String()), nil
+}
+
+// UnmarshalText implements the encoding.TextUnmarshaler interface.
+// The duration is expected to be a quoted string in ParseDuration syntax.
+func (d *Duration) UnmarshalText(data []byte) error {
+	// Fractional seconds are handled implicitly by Parse.
+	var err error
+	*d, err = ParseDuration(string(data))
+	return err
+}
+
 // Add returns the time t+d.
 func (t Time) Add(d Duration) Time {
 	t.sec += int64(d / 1e9)
